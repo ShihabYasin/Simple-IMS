@@ -1,0 +1,331 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+{% if error_message %}
+
+<div class="alert alert-danger">{{ error_message }}</div>
+
+{% endif %}
+
+{% if invoice %}
+<!-- Display invoice -->
+
+<h2 class="text-center">Invoice {{ invoice.id }}</h2>
+
+<!-- Customer information -->
+<form method="POST" action="{% url 'invoice:view_invoice' invoice.id %}" name="customer" class="form-horizontal">
+	{% csrf_token %}
+	<div class="panel panel-primary">
+		<div class="panel-heading">Customer</div>
+		<div class="panel-body">
+			<div class="form-group">
+				<label class="col-sm-3 control-label">Customer:</label>
+				<div class="col-sm-6">
+					<p class="form-control-static"><a href="{% url 'invoice:customer' invoice.customer.id %}">{{ invoice.customer }}</a></p>
+				</div>
+			</div>
+			<div class="form-group">
+				<label class="col-sm-3 control-label">Expiration Date:</label>
+				<div class="col-sm-6">
+					<input type="text" class="form-control" name="expiration_date" id="expirationdate" value="{{ invoice.expiration_date|date:"SHORT_DATE_FORMAT" }}">
+				</div>
+				<script type="text/javascript">
+					$(function () {
+						$('#expirationdate').datepicker({
+							todayBtn: "linked",
+							orientation: "bottom left",
+							autoclose: true
+						});
+					});
+					</script>
+			</div>
+			<div class="form-group">
+				<label class="col-sm-3 control-label">Status:</label>
+				<div class="col-sm-6">
+					<select name="status" class="form-control">
+						<option value="Draft" {% if invoice.draft %}selected{% endif %}>Draft</option>
+						<option value="Paid" {% if invoice.paid %}selected{% endif %}>Paid</option>
+						<option value="Unpaid" {% if invoice.unpaid %}selected{% endif %}>Unpaid</option>
+					<select>
+				</div>
+			</div>
+		</div>
+		<div class="panel-footer">
+			<input type="submit" value="Save" class="btn btn-primary">
+			<a href="{% url 'invoice:print_invoice' invoice.id %}" target="_new" class="btn btn-default">Printable Invoice</a>
+		</div>
+	</div>
+</form>
+
+<!-- END Customer information -->
+
+<!-- Invoice items -->
+
+<form action="{% url 'invoice:add_item' invoice.id %}" method="post" class="form-inline">
+	{% csrf_token %}
+	{{ formset.management_form }}
+	
+	<div class="panel panel-primary">
+		<div class="panel-heading">Invoice items</div>
+		<table class="table table-hover">
+			<tr>
+				<th>Item</th>
+				<th>Description</th>
+				<th>Cost (GHS)</th>
+				<th>Qty</th>
+				<th>Total (GHS)</th>
+				<th class="text-right">Actions</th>
+			</tr>
+			{% for item in invoice.invoiceitem_set.all %}
+			<tr>
+				<td>{{ item.name }}</td>
+				<td>{{ item.description }}</td>
+				<td>GHS {{ item.cost }}</td>
+				<td>{{ item.qty }}</td>
+				<td>{{ item.total }}</td>
+				<td class="text-right">
+					<button type="button" id="delete-btn" class="btn btn-xs btn-danger" data-toggle="modal" data-target="#confirmdelete" data-object-name="{{ item.name }}" data-delete-url="{% url 'invoicemanager:delete_item' invoice.id item.id %}">Delete</button>
+				</td>
+			</tr>
+			{% endfor %}
+			
+			{% for forms in formset %}
+			<tr class="form-row">	
+				<td id="items-field">{{ forms.item }}</td>
+				<td id="description-field">{{ forms.description }}</td>
+				<td>
+					<div class="input-group" id="cost-field">
+						<span class="input-group-addon"></span>{{ forms.cost }}
+					</div>
+				</td>
+				<td id="qty-field">{{ forms.qty }}</td>
+				<td>&nbsp;</td>
+				<td>
+					<div class="btn-group" role="group">
+						<button class="btn btn-primary add-form-row">+</button>
+						<button class="btn btn-danger remove-form-row">-</button>
+					</div>
+				</td>
+				
+			</tr>
+			{% endfor %}
+				
+		</table>
+		<div class="panel-footer">
+			<input type="submit" class="btn btn-primary" value="Add">
+			<div id="total-output" class="text-right"><strong>Total: GHS {{ invoice.total_items }}</strong></div>
+		</div>
+	</div>
+</form>
+
+<div class="well text-right">Invoice net total: GHS {{ invoice.total }}</div>
+
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="confirmdelete" role="dialog">
+	<div class="modal-dialog">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h4 class="modal-title">Confirm</h4>
+			</div>
+			<div class="modal-body">
+
+			</div>
+			<div class="modal-footer">
+				<button type="button" class="btn btn-default" data-dismiss="modal">No</button>
+				<a href="#" class="btn btn-danger">Yes</a>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script>
+	function isFormFieldsEmpty() {
+		var test = true;
+		$('table tr input').each(function() {
+			var value = $(this).val();
+			if (value) { test &=false; } 
+		});
+		return test;
+	}
+
+	function someFormFieldsEmpty(){
+		var test = false;
+		$('table tr input').each(function(){
+			var value = $(this).val();
+			if ( $.trim(value).length == 0 ) {
+				test = true;
+			}
+		});
+		return test;
+	}
+
+	$("div.panel-footer input[value=Add]").click(function(event){
+		if ( someFormFieldsEmpty() ) {
+			var response = confirm("Most fields are empty. They will be ignore if you continue with the operation. Do you want to continue?");
+			if ( response == false ) { event.preventDefault(); }
+		}
+	});
+
+	/*Automatically update the total cost of items in invoice when input fields are changed*/
+	$("table tr input").change(function(event){
+		var elementNameAttr = $(this).attr("name"), index, cost_value, qty_value, sum=0;
+		if (elementNameAttr) { index = elementNameAttr.split("-")[1]; }
+		
+		cost_value = parseFloat( $("table tr input[name=form-"+index+"-cost]").val() );
+		qty_value = parseInt( $("table tr input[name=form-"+index+"-qty]").val() );
+		if (cost_value && qty_value) {  //if fields are set
+			var fourth_td_element = $("table tr input[name=form-"+index+"-qty]").parent().siblings()[3];
+			fourth_td_element.innerText = cost_value * qty_value;
+			
+			var i = 0;
+			$("table tr").each(function() {  /*sum all total values*/
+				fourth_td_element = $(this).children()[4];
+				var value = fourth_td_element.innerText;
+				if (value && $.trim(value).length != 0 && i > 0){ sum += parseFloat(value); }
+				i += 1;
+			});
+
+			$("div#total-output").html("<strong>Total: GHS "+sum+"</strong>");
+			$("div#total-output").attr("data", sum);
+			$("div.well").text("Invoice net total: GHS "+sum);
+		} else {
+			var fourth_td_element = $("table tr input[name=form-"+index+"-qty]").parent().siblings()[3];
+			fourth_td_element.innerText = 0;
+		}
+	});
+
+	function on_minus_press(elem){
+		var elem = $(elem).parent().parent().siblings()[4];
+		var elem_value = parseFloat(elem.innerText);
+		var totalElementData = $("div#total-output").attr("data");
+		
+		if ( totalElementData ){
+			totalElementData = parseFloat(totalElementData);
+			totalElementData -= elem_value;
+			
+			if ( totalElementData > 0 ) {
+				$("div#total-output").html("<strong>Total: GHS "+totalElementData+"</strong>");
+				$("div#total-output").attr("data", totalElementData);
+				$("div.well").text("Invoice net total: GHS "+totalElementData);
+			}
+		}
+	}
+
+	$(document).ready(function() {
+		$('#confirmdelete').on('show.bs.modal', function(e) {
+		    var name = $(e.relatedTarget).data('object-name');
+			var url = $(e.relatedTarget).data('delete-url');
+			var confirm_msg;
+
+			if ( isFormFieldsEmpty() ) { 
+				confirm_msg = "Are you sure you want to delete " + name + "?";
+			} else { 
+				confirm_msg = "This operation will clear the data you have entered in the forms. Do you really want to continue?";
+			}
+			
+			$('#confirmdelete .modal-body').text(confirm_msg);
+			$('#confirmdelete .modal-footer a').attr('href', url);
+		});
+	});
+</script>
+<!-- END delete confirmation modal -->
+
+
+<!---Handles the formset on this view-->
+<script type="text/javascript">
+	function updateElementIndex(el, prefix, ndx) {
+		var id_regex = new RegExp('(' + prefix + '-\\d+)');
+		var replacement = prefix + '-' + ndx;
+		if ($(el).attr("for")) $(el).attr("for", $(el).attr("for").replace(id_regex, replacement));
+		if (el.id) el.id = el.id.replace(id_regex, replacement);
+		if (el.name) el.name = el.name.replace(id_regex, replacement);
+	}
+	
+	function cloneMore(selector, prefix) {
+		var newElement = $(selector).clone(true);
+		var total = $('#id_' + prefix + '-TOTAL_FORMS').val();
+		newElement.find(':input').each(function() {
+			var name = $(this).attr('name')
+			if(name) {
+				name = name.replace('-' + (total-1) + '-', '-' + total + '-');
+				var id = 'id_' + name;
+				$(this).attr({'name': name, 'id': id}).val('').removeAttr('checked');
+			}
+		});
+		total++;
+		$('#id_' + prefix + '-TOTAL_FORMS').val(total);
+		$(selector).after(newElement);
+		var conditionRow = $('.form-row:not(:last)');
+		conditionRow.find('.btn.add-form-row')
+		return false;
+	}
+	
+	function deleteForm(prefix, btn) {
+		var total = parseInt($('#id_' + prefix + '-TOTAL_FORMS').val());
+		if (total > 1){
+			btn.closest('.form-row').remove();
+			var forms = $('.form-row');
+			$('#id_' + prefix + '-TOTAL_FORMS').val(forms.length);
+			for (var i=0, formCount=forms.length; i<formCount; i++) {
+				$(forms.get(i)).find(':input').each(function() {
+					updateElementIndex(this, prefix, i);
+				});
+			}
+		}
+		return false;
+	}
+	$(document).on('click', '.add-form-row', function(e){
+		e.preventDefault();
+		cloneMore('.form-row:last', 'form');
+		return false;
+	});
+	$(document).on('click', '.remove-form-row', function(e){
+		e.preventDefault();
+		on_minus_press($(this));
+		deleteForm('form', $(this));
+		return false;
+	});
+	
+</script>
+<!---Handles the formset on this view-->
+
+
+{% if confirm_update %}
+<!-- Update success modal -->
+<div class="modal fade" id="updateconfirm" role="dialog">
+    <div class="modal-dialog">
+
+      <!-- Modal content-->
+      <div class="modal-content">
+        <div class="modal-body">
+			<h4>Changes saved!</h4>
+        </div>
+        <div class="modal-footer">
+			<a href="#" data-dismiss="modal" class="btn btn-primary">Ok</a>
+        </div>
+      </div>
+    </div>
+</div>
+
+<!-- Trigger success confirmation modal -->
+<script>
+$(document).ready(function(){
+	$("#updateconfirm").modal();
+});
+</script>
+<!-- End success confirmation modal -->
+{% endif %}
+
+<!-- End display invoice -->
+
+{% else %}
+<!-- Display invoice error -->
+
+<div class="alert alert-warning">Invoice number not found!</div>
+
+<!-- End display invoice error -->
+{% endif %}
+
+{% endblock %}
